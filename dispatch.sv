@@ -9,7 +9,7 @@
 // Project Name: 
 // Target Devices: 
 // Tool Versions: 
-// Description: 
+// Description:     
 // 
 // Dependencies: 
 // 
@@ -35,11 +35,9 @@ module dispatch(
     // Data from FU
     input logic mispredict,
     input logic [4:0] mispredict_tag,
-    input logic [6:0] ps_in_alu,
-    input logic [6:0] ps_in_b,
-    input logic [6:0] ps_in_mem,
+    input logic [6:0] ps_alu_in,
+    input logic [6:0] ps_mem_in,
     input logic ps_alu_ready,
-    input logic ps_b_ready,
     input logic ps_mem_ready,
     input logic fu_alu_ready,
     input logic fu_b_ready,
@@ -50,9 +48,9 @@ module dispatch(
     output rs_data rs_b,
     output rs_data rs_mem,
     
-    output logic alu_dispatched,
-    output logic b_dispatched,
-    output logic mem_dispatched
+    output logic alu_issued,
+    output logic b_issued,
+    output logic mem_issued
 );
     logic rs_alu_full = '0;
     logic rs_b_full = '0;
@@ -65,52 +63,61 @@ module dispatch(
     assign data_q = data_in;
         
     always_comb begin
-        ready_in = !rob_full && (!rs_alu_full 
-                    || !rs_b_full || !rs_mem_full);
-        if (ready_in && valid_in) begin
-            unique case (data_q.fu) 
-                2'b01: begin
+        ready_in = 1'b0;
+        di_en_alu = 1'b0;
+        di_en_b = 1'b0;
+        di_en_mem = 1'b0;
+        unique case (data_q.fu)
+            2'b01: begin // ALU
+                ready_in = !rob_full && !rs_alu_full;
+                if (ready_in && valid_in)
                     di_en_alu = 1'b1;
-                    $display ("Set di_en_alu to 1 : %d", di_en_alu); 
-                    $display("data_in.pd_new : %d", data_q.pd_new);
-                end
-                2'b10: di_en_b = 1'b1;
-                2'b11: di_en_mem = 1'b1;
-                default: begin
-                    di_en_alu = 1'b0;
-                    di_en_b = 1'b0;
-                    di_en_mem = 1'b0;  
-                end
-            endcase
-        end else begin
-            di_en_alu = 1'b0;
-            di_en_b = 1'b0;
-            di_en_mem = 1'b0;
+            end
+            2'b10: begin // BR
+                ready_in = !rob_full && !rs_b_full;
+                if (ready_in && valid_in)
+                    di_en_b = 1'b1;
+            end
+            2'b11: begin // MEM
+                ready_in = !rob_full && !rs_mem_full;
+                if (ready_in && valid_in)
+                    di_en_mem = 1'b1;
+            end
+            default: begin
+                // e.g. x0-writes / NOP: only ROB capacity matters
+                ready_in = !rob_full;
+            end
+        endcase
+    end
+    
+    always_ff @(posedge clk) begin
+        if (ps_alu_ready) begin
+            $display("[%0t] SCOREBOARD: set preg_rtable[%0d]=1 (ALU)", $time, ps_alu_in);
+        end
+        if (di_en_alu && data_q.pd_new != 7'd0) begin
+            $display("[%0t] SCOREBOARD: clear preg_rtable[%0d]=0 (dispatch ALU)", $time, data_q.pd_new);
         end
     end
     
     logic preg_rtable[0:127];
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            for (logic [6:0] i = 0; i < 128; i++) begin
+            for (logic [7:0] i = 0; i < 128; i++) begin
                 preg_rtable[i] <= 1'b1;
             end
         end else begin
             // set that preg to 0
-            if (di_en_alu) begin
+            if (di_en_alu && data_q.pd_new != 7'd0) begin
                 preg_rtable[data_q.pd_new] <= 1'b0;
             end
-            if (di_en_mem) begin
+            if (di_en_mem && data_q.pd_new != 7'd0) begin
                 preg_rtable[data_q.pd_new] <= 1'b0; 
             end
             if (ps_alu_ready) begin
-                preg_rtable[ps_in_alu] <= 1'b1;
-            end 
-            if (ps_b_ready) begin
-                preg_rtable[ps_in_b] <= 1'b1;
+                preg_rtable[ps_alu_in] <= 1'b1;
             end 
             if (ps_mem_ready) begin
-                preg_rtable[ps_in_mem] <= 1'b1;
+                preg_rtable[ps_mem_in] <= 1'b1;
             end
         end
     end
@@ -125,8 +132,6 @@ module dispatch(
         // From fu_alu
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
-        .ps_in(ps_in_alu),
-        .ps_ready(ps_alu_ready),
         .fu_ready(fu_alu_ready),
         
         // from ROB
@@ -137,7 +142,7 @@ module dispatch(
         .preg_rtable(preg_rtable),
         
         // Output data
-        .fu_dispatched(alu_dispatched),
+        .fu_issued(alu_issued),
         .full(rs_alu_full),
         .data_out(rs_alu)
     );
@@ -149,11 +154,9 @@ module dispatch(
         // From rename
         .r_data(data_q),
         
-        // From fu_alu
+        // From fu_b
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
-        .ps_in(ps_in_b),
-        .ps_ready(ps_b_ready),
         .fu_ready(fu_b_ready),
         
         // from ROB
@@ -164,7 +167,7 @@ module dispatch(
         .preg_rtable(preg_rtable),
         
         // Output data
-        .fu_dispatched(b_dispatched),
+        .fu_issued(b_issued),
         .full(rs_b_full),
         .data_out(rs_b)
     );
@@ -176,11 +179,9 @@ module dispatch(
         // From rename
         .r_data(data_q),
         
-        // From fu_alu
+        // From fu_mem
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
-        .ps_in(ps_in_mem),
-        .ps_ready(ps_mem_ready),
         .fu_ready(fu_mem_ready),
         
         // from ROB
@@ -191,7 +192,7 @@ module dispatch(
         .preg_rtable(preg_rtable),
         
         // Output data
-        .fu_dispatched(mem_dispatched),
+        .fu_issued(mem_issued),
         .full(rs_mem_full),
         .data_out(rs_mem)
     );

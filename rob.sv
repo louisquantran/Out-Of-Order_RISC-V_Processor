@@ -11,20 +11,21 @@ module rob (
     input logic [31:0] pc_in,
     
     // from FU stage 
-    input logic complete_in,
-    input logic [4:0] rob_fu,
+    input logic fu_alu_done,
+    input logic fu_b_done,
+    input logic fu_mem_done,
+    input logic [4:0] rob_fu_alu,
+    input logic [4:0] rob_fu_b,
+    input logic [4:0] rob_fu_mem,
     input logic mispredict,
-    input logic branch,
     input logic [4:0] mispredict_tag,
     
     // Update free_list
     output logic [6:0] preg_old,
     output logic valid_retired,
-    // Update FU availability
-    output logic complete_out,
 
     output logic full,
-    output logic empty,
+//    output logic empty,
     // For RS to keep track of the rob index
     output logic [4:0] ptr
 );
@@ -36,14 +37,13 @@ module rob (
     logic [4:0]  ctr;            
     
     assign full = (ctr == 16); 
-    assign empty = (ctr == 0);
+//    assign empty = (ctr == 0);
     
     logic do_write;           
     logic do_retire;
     
-    assign do_retire = rob_table[r_ptr].complete && rob_table[r_ptr].valid;
+    assign do_retire = (ctr!=0) && rob_table[r_ptr].complete && rob_table[r_ptr].valid;
     assign do_write = write_en && !full;
-    assign complete_out = rob_table[r_ptr].complete;
 
     always_ff @(posedge clk) begin
         if (reset) begin
@@ -51,13 +51,19 @@ module rob (
             r_ptr    <= '0;
             ctr      <= '0;
             for (int i = 0; i < 16; i++) begin
-                rob_table[i] = '0;
+                rob_table[i] <= '0;
             end
         end else begin
             valid_retired <= 1'b0;
             // Update the complete column for a specific instruction
-            if (complete_in && rob_table[rob_fu].valid) begin
-                rob_table[rob_fu].complete <= 1'b1;
+            if (fu_alu_done && rob_table[rob_fu_alu].valid) begin
+                rob_table[rob_fu_alu].complete <= 1'b1;
+            end
+            if (fu_b_done && rob_table[rob_fu_b].valid) begin
+                rob_table[rob_fu_b].complete <= 1'b1;
+            end
+            if (fu_mem_done && rob_table[rob_fu_mem].valid) begin
+                rob_table[rob_fu_mem].complete <= 1'b1;
             end
             // Mispredict operation
             if (mispredict) begin

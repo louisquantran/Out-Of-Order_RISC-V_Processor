@@ -24,10 +24,14 @@ module phys_reg_file(
     input logic clk,
     input logic reset,
     
-    // from ROB
-    input logic write_en,
-    input logic [31:0] data_in,
-    input logic [6:0] pd_in,
+    // from FUs
+    input logic write_alu_en,
+    input logic [31:0] data_alu_in,
+    input logic [6:0] pd_alu_in,
+    
+    input logic write_mem_en,
+    input logic [31:0] data_mem_in,
+    input logic [6:0] pd_mem_in,
     
     // from RS
     input logic read_en_alu,
@@ -68,8 +72,11 @@ module phys_reg_file(
                 ps1_out_mem <= prf[ps1_in_mem];
                 ps2_out_mem <= prf[ps2_in_mem];
             end
-            if (write_en) begin
-                prf[pd_in] <= data_in;
+            if (write_alu_en) begin
+                prf[pd_alu_in] <= data_alu_in;
+            end
+            if (write_mem_en) begin
+                prf[pd_mem_in] <= data_mem_in;
             end
         end
     end

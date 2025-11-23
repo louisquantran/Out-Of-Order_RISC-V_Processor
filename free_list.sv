@@ -4,19 +4,21 @@ parameter int DEPTH = 128
     input logic clk,
     input logic reset,
     
+    // from ROB
     input logic write_en,
-//    input logic [7:0] data_in,
+    input logic [6:0] data_in,
+    
     input logic read_en,
     input logic mispredict,
     output logic empty,
     input logic [6:0] re_ptr,
-    output logic [6:0] ptr
+    output logic [6:0] pd_new_out
 );
-//    logic [7:0] list [0:127];
+    logic [6:0] list [0:127];
     logic [6:0]  w_ptr, r_ptr;  
-    logic [6:0] ctr;
+    logic [7:0] ctr;
     
-    assign ptr = r_ptr;    
+    assign pd_new_out = list[r_ptr];    
     assign empty = (ctr == 0);
     
     logic do_write;
@@ -35,26 +37,25 @@ parameter int DEPTH = 128
     end
     always_ff @(posedge clk) begin
         if (reset) begin
-        w_ptr    <= 8'd32;
-        r_ptr    <= 8'd1;
-        ctr      <= 8'd32;
+        w_ptr    <= 7'd1;
+        r_ptr    <= 7'd32;
+        ctr      <= 7'd96;
+        for (int i = 32; i <= 127; i++) begin
+            list[i] <= i;
+        end
         end else begin
             // Mispredict case
             if (mispredict) begin
                 ctr <= ctr + distance;
                 r_ptr <= re_ptr;
             end else begin
-                if (do_write && (ctr == DEPTH) && !do_read) begin
-                    r_ptr <= (r_ptr == 127) ? 1 : re_ptr + 1;
-                end
-                
                 if (do_read) begin
-                    r_ptr <= (r_ptr == 127) ? 1 : re_ptr + 1;
+                    r_ptr <= (r_ptr == 127) ? 1 : r_ptr + 1;
                 end
                 
-                if (do_write) begin
+                if (do_write && data_in != '0) begin
                     w_ptr      <= (w_ptr == 127) ? 1 : w_ptr + 1;
-                    
+                    list[w_ptr] <= data_in; 
                 end
             
                 unique case ({do_write, do_read})

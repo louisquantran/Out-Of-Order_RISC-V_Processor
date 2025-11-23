@@ -15,9 +15,10 @@ module map_table(
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            for (int i = 0; i < 32; i ++) begin
+            for (int i = 1; i < 32; i ++) begin
                 map[i] <= i;
             end
+            map[0] <= '0;
         end else begin
             if (mispredict) begin
                 map <= re_map;

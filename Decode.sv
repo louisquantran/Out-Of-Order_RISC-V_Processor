@@ -52,6 +52,6 @@ module decode(
   
     assign data_out.pc = pc_in;
     assign valid_out = valid_in;
-    assign ready_in = ready_out;
+    assign ready_in = ready_out || !valid_out;
     
 endmodule

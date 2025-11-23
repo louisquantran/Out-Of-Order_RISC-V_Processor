@@ -1,5 +1,7 @@
 `timescale 1ns / 1ps
 
+import types_pkg::*;
+
 module skid_buffer#(
     parameter type T = logic [31:0]
 )(
