@@ -1,4 +1,4 @@
-module ICache (
+module i_cache (
     input  logic [31:0] address,
     output logic [31:0] instruction
 );
@@ -7,6 +7,6 @@ module ICache (
     initial begin
         $readmemh("program.mem", instr_mem);
     end
-    
+   
     assign instruction = instr_mem[address >> 2];
 endmodule
