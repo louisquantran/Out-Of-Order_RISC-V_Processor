@@ -32,7 +32,7 @@ module fetch(
 );
     logic [31:0] instr_icache;
         
-    // Call ICache
+    // Call i_cache
     i_cache i_cache_dut (
         .address(pc_in),
         .instruction(instr_icache)
