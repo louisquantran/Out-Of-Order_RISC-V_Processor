@@ -24,8 +24,11 @@ module rename(
     output logic valid_out,
     input logic ready_out
 );
-    wire write_pd = data_in.Opcode != 7'b0100011 && data_in.rd != 5'd0;
+    wire write_pd = data_in.Opcode != 7'b0100011 
+                    && data_in.Opcode != 7'b1100011 
+                    && data_in.rd != 5'd0;
     wire rename_en = ready_in && valid_in;
+    wire fl_write_en = write_en && (rob_data_in != 7'b0);
    
     logic read_en;
     logic update_en;     
@@ -38,8 +41,13 @@ module rename(
     
     // Support mispeculation 
     logic [6:0] re_map [0:31];
-    logic [6:0] re_preg;
-
+    logic [6:0] re_list [0:95];
+    logic [6:0] re_r_ptr;
+    logic [6:0] re_w_ptr;
+    
+    logic [6:0] r_ptr_list;
+    logic [6:0] w_ptr_list;
+    logic [6:0] list [0:95];
     logic [6:0] map [0:31];
     
     // Speculation is 1 when we encounter a branch instruction
@@ -49,20 +57,21 @@ module rename(
     assign read_en = write_pd && rename_en;
     assign update_en = write_pd && rename_en;
         
-    always_ff @(posedge clk) begin
+    always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             ctr <= 4'b0;
             data_out <= '0;
-            valid_out <= 1'b0;
             valid_out <= 1'b0;
         end else begin
             if (valid_out && ready_out) begin
                 valid_out <= 1'b0;
             end
             if (rename_en && branch) begin
-                re_preg <= preg;
+                re_list <= list;
                 re_map <= map;
                 re_ctr <= ctr;
+                re_r_ptr <= r_ptr_list;
+                re_w_ptr <= w_ptr_list;
             end
             if (mispredict) begin
                 ctr <= re_ctr;
@@ -79,7 +88,6 @@ module rename(
                 data_out.Opcode <= data_in.Opcode;
                 data_out.func3 <= data_in.func3;
                 data_out.func7 <= data_in.func7;
-                valid_out <= 1'b1;
                 if (write_pd) begin
                     data_out.pd_new <= preg;
                 end else begin
@@ -106,11 +114,16 @@ module rename(
         .clk(clk),
         .reset(reset),
         .mispredict(mispredict),
-        .write_en(write_en),    
+        .write_en(fl_write_en),    
         .data_in(rob_data_in),
         .read_en(read_en),
         .empty(empty),
-        .re_ptr(re_preg),
-        .pd_new_out(preg)
+        .re_list(re_list),
+        .re_r_ptr(re_r_ptr),
+        .re_w_ptr(re_w_ptr),
+        .pd_new_out(preg),
+        .list_out(list),
+        .r_ptr_out(r_ptr_list),
+        .w_ptr_out(w_ptr_list)
     );
 endmodule
