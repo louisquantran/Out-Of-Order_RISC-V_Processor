@@ -218,7 +218,8 @@ module rob_tb;
             else $fatal(1, "full mismatch: full=%0b ctr=%0d",
                         full, dut.ctr);
     end
-
+    logic [6:0] exp_pd_old [0:2];
+    logic [6:0] seen_pd_old [0:2];
     // Tests 
     initial begin
         logic [4:0] t0, t1, t2, t3, t4, t5, newtag;
@@ -309,6 +310,115 @@ module rob_tb;
 
         // Allocate again - should succeed now
         alloc(newtag, 7'h70, 7'h60, 32'h0000_4000);
+        
+        // TEST 4: Mispredict with branch not at head (middle of ROB)
+        $display("TEST 4: Mispredict with branch not at head");
+
+        apply_reset();  // fresh ROB & TB state
+
+        // Layout: t0 (oldest), t1, t2 (branch), t3 (younger)
+        alloc(t0, 7'h10, 7'h01, 32'h0000_4000); // tag 0
+        alloc(t1, 7'h11, 7'h02, 32'h0000_4004); // tag 1
+        alloc(t2, 7'h12, 7'h03, 32'h0000_4008); // tag 2 (branch)
+        alloc(t3, 7'h13, 7'h04, 32'h0000_400C); // tag 3 (younger)
+
+        // Complete a younger entry (t3) - should NOT retire yet
+        complete_tag(t3);
+        expect_no_retire_next;
+
+        // Now mispredict at t2 (branch in the middle)
+        do_mispredict(t2);
+
+        // After mispredict:
+        // - ROB should logically contain t0, t1, t2
+        // - TB model: head = 0, tail = inc16(2) = 3, so occ = 3
+        if (occ(tb_rptr, tb_wptr) != 3)
+            $fatal(1,
+              "[TEST4] expected occ=3 after mispredict at mid-ROB (t2), got occ=%0d",
+              occ(tb_rptr, tb_wptr));
+
+        // Now complete and retire t0, t1, t2 in order.
+        // Note: tb_rptr always equals the next expected retire tag by construction.
+        complete_tag(t0);
+        expect_retire(t0);
+
+        complete_tag(t1);
+        expect_retire(t1);
+
+        complete_tag(t2);
+        expect_retire(t2);
+
+        if (occ(tb_rptr, tb_wptr) != 0)
+            $fatal(1, "[TEST4] ROB not empty at end (occ=%0d)",
+                   occ(tb_rptr, tb_wptr));
+
+        // Next allocation should reuse tag = inc16(t2) = 3
+        alloc(newtag, 7'h20, 7'h05, 32'h0000_4010);
+        if (newtag != inc16(t2))
+            $fatal(1,
+              "[TEST4] expected next alloc tag=%0d after flush+retire, got=%0d",
+              inc16(t2), newtag);
+        else
+            $display("TEST 4 PASS: mid-ROB mispredict flushed younger, preserved older + branch, tags reused correctly.");
+
+                // TEST 5: Free-list interface (preg_old / valid_retired)
+        $display("TEST 5: preg_old / valid_retired sequence");
+
+        apply_reset();
+
+        // Allocate 3 entries with distinct pd_old_in values
+        exp_pd_old[0] = 7'h31;
+        exp_pd_old[1] = 7'h32;
+        exp_pd_old[2] = 7'h33;
+
+        alloc(t0, 7'h40, exp_pd_old[0], 32'h0000_5000);
+        alloc(t1, 7'h41, exp_pd_old[1], 32'h0000_5004);
+        alloc(t2, 7'h42, exp_pd_old[2], 32'h0000_5008);
+
+        // RETIRE t0
+        complete_tag(t0);
+        @(posedge clk);
+        if (!valid_retired)
+            $fatal(1, "[TEST5] expected valid_retired on first retire (t0)");
+        seen_pd_old[0] = preg_old;
+        if (seen_pd_old[0] != exp_pd_old[0])
+            $fatal(1,
+              "[TEST5] preg_old mismatch on first retire: expected %0d got %0d",
+              exp_pd_old[0], seen_pd_old[0]);
+        tb_rptr = inc16(tb_rptr);     // <-- advance TB head
+        @(posedge clk);               // consume pulse
+
+        // RETIRE t1
+        complete_tag(t1);
+        @(posedge clk);
+        if (!valid_retired)
+            $fatal(1, "[TEST5] expected valid_retired on second retire (t1)");
+        seen_pd_old[1] = preg_old;
+        if (seen_pd_old[1] != exp_pd_old[1])
+            $fatal(1,
+              "[TEST5] preg_old mismatch on second retire: expected %0d got %0d",
+              exp_pd_old[1], seen_pd_old[1]);
+        tb_rptr = inc16(tb_rptr);     // <-- advance TB head
+        @(posedge clk);
+
+        // RETIRE t2
+        complete_tag(t2);
+        @(posedge clk);
+        if (!valid_retired)
+            $fatal(1, "[TEST5] expected valid_retired on third retire (t2)");
+        seen_pd_old[2] = preg_old;
+        if (seen_pd_old[2] != exp_pd_old[2])
+            $fatal(1,
+              "[TEST5] preg_old mismatch on third retire: expected %0d got %0d",
+              exp_pd_old[2], seen_pd_old[2]);
+        tb_rptr = inc16(tb_rptr);     // <-- advance TB head
+        @(posedge clk);
+
+        if (occ(tb_rptr, tb_wptr) != 0)
+            $fatal(1, "[TEST5] ROB not empty at end (occ=%0d)",
+                   occ(tb_rptr, tb_wptr));
+        else
+            $display("TEST 5 PASS: preg_old and valid_retired pulse in correct order.");
 
         $display("[PASS] All ROB tests completed.");
         $finish;

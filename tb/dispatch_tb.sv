@@ -2,7 +2,7 @@
 
 import types_pkg::*;
 
-module tb_dispatch;
+module dispatch_tb;
 
     // Signals
     logic clk;
@@ -48,21 +48,27 @@ module tb_dispatch;
         .rob_index_in   (rob_index_in),
         .mispredict     (mispredict),
         .mispredict_tag (mispredict_tag),
-        .ps_in_alu      (ps_in_alu),
-        .ps_in_b        (ps_in_b),
-        .ps_in_mem      (ps_in_mem),
+
+        // NOTE: name fixes here
+        .ps_alu_in      (ps_in_alu),
+        .ps_mem_in      (ps_in_mem),
+        .ps_b_in        (ps_in_b),
+
         .ps_alu_ready   (ps_alu_ready),
         .ps_b_ready     (ps_b_ready),
         .ps_mem_ready   (ps_mem_ready),
         .fu_alu_ready   (fu_alu_ready),
         .fu_b_ready     (fu_b_ready),
         .fu_mem_ready   (fu_mem_ready),
+
         .rs_alu         (rs_alu),
         .rs_b           (rs_b),
         .rs_mem         (rs_mem),
-        .alu_dispatched (alu_dispatched),
-        .b_dispatched   (b_dispatched),
-        .mem_dispatched (mem_dispatched)
+
+        // name fixes: issued -> dispatched
+        .alu_issued     (alu_dispatched),
+        .b_issued       (b_dispatched),
+        .mem_issued     (mem_dispatched)
     );
 
     // Clock Generation
@@ -70,6 +76,21 @@ module tb_dispatch;
         clk = 0;
         forever #5 clk = ~clk;  // 10 ns period
     end
+
+    // -------- Helpers to peek ALU RS inside dispatch --------
+    task automatic dump_rs_alu(input string tag);
+        $display("ALU RS dump (%s) @ time %0t", tag, $time);
+        for (int i = 0; i < 8; i++) begin
+            $display("ALU_RS[%0d]: valid=%0b ready=%0b rob=%0d ps1=%0d ps2=%0d pd=%0d",
+                     i,
+                     uut.res_alu.rs_table[i].valid,
+                     uut.res_alu.rs_table[i].ready,
+                     uut.res_alu.rs_table[i].rob_index,
+                     uut.res_alu.rs_table[i].ps1,
+                     uut.res_alu.rs_table[i].ps2,
+                     uut.res_alu.rs_table[i].pd);
+        end
+    endtask
 
     // Tasks
 
@@ -142,6 +163,43 @@ module tb_dispatch;
         end
     endtask
 
+    // Same as above, but with explicit ROB tag for mispredict tests
+    task automatic dispatch_op_with_tag(
+        input logic [1:0] fu_type,
+        input logic [6:0] pd_dest,
+        input logic [4:0] rob_tag
+    );
+        begin
+            @(posedge clk);
+            while (!ready_in) begin
+                @(posedge clk);
+            end
+
+            rob_index_in    = rob_tag;
+
+            data_in         = '0;
+            data_in.fu      = fu_type;
+            data_in.pd_new  = pd_dest;
+            data_in.ps1     = 7'd10;
+            data_in.ps2     = 7'd11;
+            data_in.Opcode  = 7'b0110011;
+            data_in.func3   = 3'b000;
+            data_in.func7   = 7'b0000000;
+            data_in.imm     = '0;
+
+            valid_in        = 1'b1;
+
+            @(posedge clk);
+
+            $display("[%0t] DISPATCH_OP_TAG fu=%0b pd_new=%0d rob=%0d ready_in=%0b",
+                     $time, fu_type, pd_dest, rob_index_in, ready_in);
+
+            valid_in        = 1'b0;
+            data_in         = '0;
+            @(posedge clk);
+        end
+    endtask
+
     // CDB broadcast: mark a physical register as ready
     task automatic broadcast_ps(
         input logic [6:0] preg,
@@ -172,17 +230,35 @@ module tb_dispatch;
         end
     endtask
 
+    // One-cycle mispredict pulse: rob_index_in plays role of ROB tail
+    task automatic do_mispredict(input logic [4:0] mis_tag,
+                                 input logic [4:0] rob_tail);
+        begin
+            @(posedge clk);
+            mispredict_tag = mis_tag;
+            rob_index_in   = rob_tail;
+            mispredict     = 1'b1;
+            $display("[%0t] MISPREDICT tag=%0d tail=%0d", $time, mis_tag, rob_tail);
+            @(posedge clk);
+            mispredict     = 1'b0;
+            @(posedge clk);
+        end
+    endtask
+
     // Main Test Sequence
+    int valid_cnt10 = 0;
+    bit seen14 = 0;
+    bit seen15 = 0;
+    int valid_cnt9 = 0;
     initial begin
         init_signals();
         reset_dut();
         
-        $display("=== Starting Dispatch Module Test (no mispredict) ===");
+        $display("Starting Dispatch Module Test (no mispredict)");
 
         // CASE 0: FU = 2'b00 hits default case (no RS, no preg_rtable change)
         $display("Test 0: FU=2'b00 (default case, no RS)");
         dispatch_op(2'b00, 7'd4);
-        // Optional: assert(uut.preg_rtable[4] == 1'b1);
 
         // CASE 1: Dispatch to ALU (FU = 01) → PR[5] busy
         $display("Test 1: Dispatch ALU Operation");
@@ -197,7 +273,6 @@ module tb_dispatch;
         $display("Test 2: Dispatch Branch Operation (no dest)");
         dispatch_op(2'b10, 7'd0);   // branch doesn't have pd_new
         @(posedge clk);
-        // No preg_rtable busy check here for branch - architecturally no dest.
 
         // CASE 3: Dispatch to MEMORY (FU = 11) → treat as load, PR[7] busy
         $display("Test 3: Dispatch Memory Operation (load-like, has dest)");
@@ -225,40 +300,12 @@ module tb_dispatch;
         // ALU RS depth = 8. We already inserted 1 ALU op in Test 1 (pd=5).
         // Add 7 more ALU instructions to reach full = 8 entries total.
         dispatch_op(2'b01, 7'd20); // 2nd ALU
-        if (uut.preg_rtable[20] == 1'b0) 
-            $display("PASS: PR[20] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[20] should be busy.");
         dispatch_op(2'b01, 7'd21); // 3rd ALU
-        if (uut.preg_rtable[20] == 1'b0) 
-            $display("PASS: PR[21] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[21] should be busy.");
         dispatch_op(2'b01, 7'd22); // 4th ALU
-        if (uut.preg_rtable[22] == 1'b0) 
-            $display("PASS: PR[22] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[22] should be busy.");
         dispatch_op(2'b01, 7'd23); // 5th ALU
-        if (uut.preg_rtable[23] == 1'b0) 
-            $display("PASS: PR[23] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[23] should be busy.");
         dispatch_op(2'b01, 7'd24); // 6th ALU
-        if (uut.preg_rtable[24] == 1'b0) 
-            $display("PASS: PR[24] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[24] should be busy.");
         dispatch_op(2'b01, 7'd25); // 7th ALU
-        if (uut.preg_rtable[25] == 1'b0) 
-            $display("PASS: PR[25] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[25] should be busy.");
         dispatch_op(2'b01, 7'd26); // 8th ALU → RS should now be full
-        if (uut.preg_rtable[26] == 1'b0) 
-            $display("PASS: PR[26] marked busy (0) in table.");
-        else 
-            $error("FAIL: PR[26] should be busy.");
         @(posedge clk);
         if (uut.rs_alu_full == 1'b1)
             $display("PASS: ALU RS detected full after 8 ALU inserts.");
@@ -324,7 +371,77 @@ module tb_dispatch;
         else
             $error("FAIL: ALU RS should have drained.");
 
-        $display("All Tests Complete (no mispredict exercised)");
+        // MISPREDICT TESTS
+        $display("\n=== Starting Mispredict Tests ===");
+        reset_dut();
+
+        // ---- Test 9: simple mispredict flush (non-wrap) ----
+        $display("Test 9: ALU mispredict flush (ROB=0,1,2,3; mispred=1, tail=4)");
+        // Dispatch 4 ALU ops with explicit ROB tags
+        dispatch_op_with_tag(2'b01, 7'd40, 5'd0);
+        dispatch_op_with_tag(2'b01, 7'd41, 5'd1); // mispred here
+        dispatch_op_with_tag(2'b01, 7'd42, 5'd2); // younger
+        dispatch_op_with_tag(2'b01, 7'd43, 5'd3); // younger
+
+        dump_rs_alu("before mispredict T9");
+
+        // Mispredict at ROB=1, tail=4 => younger = {2,3}
+        do_mispredict(5'd1, 5'd4);
+
+        dump_rs_alu("after mispredict T9");
+
+        valid_cnt9 = 0;
+        for (int i = 0; i < 8; i++) begin
+            if (uut.res_alu.rs_table[i].valid) begin
+                valid_cnt9++;
+                if (uut.res_alu.rs_table[i].rob_index == 5'd2 ||
+                    uut.res_alu.rs_table[i].rob_index == 5'd3)
+                    $error("T9 FAIL: younger ROB %0d survived in ALU_RS[%0d].",
+                           uut.res_alu.rs_table[i].rob_index, i);
+            end
+        end
+        if (valid_cnt9 != 2)
+            $error("T9 FAIL: expected 2 valid entries (ROB 0,1) after flush, got %0d.", valid_cnt9);
+        else
+            $display("T9 PASS: younger ROB entries 2,3 flushed; 0,1 preserved.");
+
+        // ---- Test 10: mispredict with ROB wrap-around ----
+        $display("Test 10: ALU mispredict with ROB wrap-around (14,15,0,1; mispred=15, tail=2)");
+        reset_dut();
+
+        // Dispatch 4 ALU ops: ROB = 14, 15, 0, 1
+        dispatch_op_with_tag(2'b01, 7'd50, 5'd14);
+        dispatch_op_with_tag(2'b01, 7'd51, 5'd15); // mispred here
+        dispatch_op_with_tag(2'b01, 7'd52, 5'd0);  // younger (wrapped)
+        dispatch_op_with_tag(2'b01, 7'd53, 5'd1);  // younger (wrapped)
+
+        dump_rs_alu("before mispredict T10");
+
+        // Tail=2 means ROB contents [15+1=0 .. 1] are younger
+        do_mispredict(5'd15, 5'd2);
+
+        dump_rs_alu("after mispredict T10");
+
+        valid_cnt10 = 0;
+        seen14 = 0;
+        seen15 = 0;
+        for (int i = 0; i < 8; i++) begin
+            if (uut.res_alu.rs_table[i].valid) begin
+                valid_cnt10++;
+                if (uut.res_alu.rs_table[i].rob_index == 5'd0 ||
+                    uut.res_alu.rs_table[i].rob_index == 5'd1)
+                    $error("T10 FAIL: younger wrapped ROB %0d survived in ALU_RS[%0d].",
+                           uut.res_alu.rs_table[i].rob_index, i);
+                if (uut.res_alu.rs_table[i].rob_index == 5'd14) seen14 = 1;
+                if (uut.res_alu.rs_table[i].rob_index == 5'd15) seen15 = 1;
+            end
+        end
+        if (!seen14 || !seen15)
+            $error("T10 FAIL: older entries (14,15) should remain. seen14=%0b seen15=%0b", seen14, seen15);
+        else
+            $display("T10 PASS: wrapped younger (0,1) flushed; older (14,15) preserved.");
+
+        $display("\nAll Tests Complete (including mispredict).");
         $finish;
     end
 

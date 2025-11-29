@@ -60,57 +60,63 @@ module res_station(
             end
         end else begin
             fu_issued <= 1'b0;
-//            if (mispredict) begin
-//                automatic logic [4:0] re_ptr = (mispredict_tag==15)?0:mispredict_tag+1;
-//                for (logic [4:0] i=re_ptr; i!=rob_index_in; i=(i==15)?0:i+1) begin
-//                    rs_table[i] <= '0;
-//                end
-//            end
-            for (logic [3:0] i = 0; i < 8; i++) begin
-                if (rs_table[i].valid) begin
-                    if (!rs_table[i].ps1_ready && preg_rtable[rs_table[i].ps1]) begin
-                        rs_table[i].ps1_ready <= 1'b1;
-                    end
-                    if (!rs_table[i].ps2_ready && preg_rtable[rs_table[i].ps2]) begin
-                        rs_table[i].ps2_ready <= 1'b1;
-                    end
-            
-                    if (rs_table[i].ps1_ready && rs_table[i].ps2_ready) begin
-                        rs_table[i].ready <= 1'b1;
+            if (mispredict) begin
+                automatic logic [4:0] re_ptr = (mispredict_tag==15)?0:mispredict_tag+1;
+                for (logic [3:0] i=0; i <= 7; i++) begin
+                    for (logic [4:0] j=re_ptr; j != rob_index_in; j=(j==15)?0:j+1) begin
+                        if (rs_table[i].rob_index == j) begin
+                            rs_table[i] <= '0;
+                            break;
+                        end
                     end
                 end
-            end
-            // Don't guard fu_ready for now
-            if (out_ready && fu_ready) begin
-                data_out <= rs_table[out_idx];
-                rs_table[out_idx] <= '0;
-                fu_issued <= 1'b1;
-            end
-            // Dispatch to RS
-            if (in_valid && di_en) begin
-                rs_table[in_idx].pc <= r_data.pc;
-                rs_table[in_idx].fu <= r_data.fu;
-                rs_table[in_idx].valid <= 1'b1;
-                rs_table[in_idx].Opcode <= r_data.Opcode;
-                rs_table[in_idx].pd <= r_data.pd_new;
-                rs_table[in_idx].ps1 <= r_data.ps1;
-                rs_table[in_idx].ps2 <= r_data.ps2;
-                rs_table[in_idx].imm <= r_data.imm;
-                rs_table[in_idx].rob_index <= rob_index_in;
-                rs_table[in_idx].ps1_ready <= 1'b0;
-                rs_table[in_idx].ps2_ready <= 1'b0;
-                rs_table[in_idx].func3 <= r_data.func3;
-                rs_table[in_idx].func7 <= r_data.func7;
-                if (preg_rtable[r_data.ps1] && preg_rtable[r_data.ps2]) begin
-                    rs_table[in_idx].ready <= 1'b1;
-                    rs_table[in_idx].ps1_ready <= 1'b1;
-                    rs_table[in_idx].ps2_ready <= 1'b1;
-                end else begin
-                    if (preg_rtable[r_data.ps1]) begin
-                        rs_table[in_idx].ps1_ready <= 1'b1;
+            end else begin
+                for (logic [3:0] i = 0; i <= 7; i++) begin
+                    if (rs_table[i].valid) begin
+                        if (!rs_table[i].ps1_ready && preg_rtable[rs_table[i].ps1]) begin
+                            rs_table[i].ps1_ready <= 1'b1;
+                        end
+                        if (!rs_table[i].ps2_ready && preg_rtable[rs_table[i].ps2]) begin
+                            rs_table[i].ps2_ready <= 1'b1;
+                        end
+                
+                        if (rs_table[i].ps1_ready && rs_table[i].ps2_ready) begin
+                            rs_table[i].ready <= 1'b1;
+                        end
                     end
-                    if (preg_rtable[r_data.ps2]) begin
+                end
+                // Don't guard fu_ready for now
+                if (out_ready && fu_ready) begin
+                    data_out <= rs_table[out_idx];
+                    rs_table[out_idx] <= '0;
+                    fu_issued <= 1'b1;
+                end
+                // Dispatch to RS
+                if (in_valid && di_en) begin
+                    rs_table[in_idx].pc <= r_data.pc;
+                    rs_table[in_idx].fu <= r_data.fu;
+                    rs_table[in_idx].valid <= 1'b1;
+                    rs_table[in_idx].Opcode <= r_data.Opcode;
+                    rs_table[in_idx].pd <= r_data.pd_new;
+                    rs_table[in_idx].ps1 <= r_data.ps1;
+                    rs_table[in_idx].ps2 <= r_data.ps2;
+                    rs_table[in_idx].imm <= r_data.imm;
+                    rs_table[in_idx].rob_index <= rob_index_in;
+                    rs_table[in_idx].ps1_ready <= 1'b0;
+                    rs_table[in_idx].ps2_ready <= 1'b0;
+                    rs_table[in_idx].func3 <= r_data.func3;
+                    rs_table[in_idx].func7 <= r_data.func7;
+                    if (preg_rtable[r_data.ps1] && preg_rtable[r_data.ps2]) begin
+                        rs_table[in_idx].ready <= 1'b1;
+                        rs_table[in_idx].ps1_ready <= 1'b1;
                         rs_table[in_idx].ps2_ready <= 1'b1;
+                    end else begin
+                        if (preg_rtable[r_data.ps1]) begin
+                            rs_table[in_idx].ps1_ready <= 1'b1;
+                        end
+                        if (preg_rtable[r_data.ps2]) begin
+                            rs_table[in_idx].ps2_ready <= 1'b1;
+                        end
                     end
                 end
             end
