@@ -8,7 +8,9 @@ module ooo_top_tb;
   logic reset = 1;
   logic exec_ready;
 
-  localparam int CLK_PERIOD = 10;  // 100 MHz
+  localparam int CLK_PERIOD        = 10;   // 100 MHz
+  localparam int MAX_CYCLES        = 1000; // safety timeout
+  localparam int PIPE_DRAIN_CYCLES = 50;   // after hitting invalid instr
 
   // Clock
   always #(CLK_PERIOD/2) clk = ~clk;
@@ -25,34 +27,13 @@ module ooo_top_tb;
     repeat (n) @(posedge clk);
   endtask
 
-  // ---------------- Control (reset + run) ----------------
-  initial begin
-    $display("=== Starting ooo_top integration test ===");
-
-    exec_ready = 1'b1;   // always ready for now
-
-    // Apply reset for a few cycles
-    reset = 1'b1;
-    run_cycles(5);
-
-    reset = 1'b0;
-    $display("[%0t] Deassert reset", $time);
-    $display("[%0t] Warm-up: letting instructions flow", $time);
-
-    // Let the program run for a while
-    run_cycles(200);
-
-    $display("[%0t] Ending ooo_top integration test", $time);
-    $finish;
-  end
-
   // ---------------- Handy wires into DUT internals ----------------
 
   // Fetch fire (already computed inside ooo_top)
-  wire fetch_fire_tb = dut.fetch_fire;
+  wire fetch_fire_tb   = dut.fetch_fire;
+  fetch_data fetch_mon = dut.fetch_out;
 
   // Simple branch "taken" indicator (for PC checker):
-  // branch FU signals that a JALR/BNE-style redirect is happening
   wire branch_taken_tb = dut.b_out.fu_b_done && dut.b_out.jalr_bne_signal;
 
   // ---------------- PC Checker (fixed off-by-one) ----------------
@@ -71,7 +52,6 @@ module ooo_top_tb;
       // We check the PC *one cycle after* the fetch that consumed an instruction.
       if (prev_fetch_fire) begin
         if (prev_branch_taken) begin
-          // Expect PC to equal last branch target
           if (dut.pc_reg !== prev_branch_pc) begin
             $error("[%0t] PC mismatch on branch: got 0x%08h, expected 0x%08h",
                    $time, dut.pc_reg, prev_branch_pc);
@@ -80,7 +60,6 @@ module ooo_top_tb;
                      $time, dut.pc_reg);
           end
         end else begin
-          // Expect sequential PC+4
           if (dut.pc_reg !== (prev_pc + 32'd4)) begin
             $error("[%0t] PC mismatch on sequential step: prev=0x%08h, got=0x%08h",
                    $time, prev_pc, dut.pc_reg);
@@ -96,6 +75,31 @@ module ooo_top_tb;
       prev_branch_taken <= branch_taken_tb;
       prev_branch_pc    <= dut.b_out.pc;
       prev_fetch_fire   <= fetch_fire_tb;
+    end
+  end
+
+  // ---------------- Detect "no more valid instructions" ----------------
+  logic seen_invalid_instr;
+  int   drain_counter;
+
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset) begin
+      seen_invalid_instr <= 1'b0;
+      drain_counter      <= 0;
+    end else begin
+      // Detect first time we fetch an invalid/unknown instruction
+      if (fetch_fire_tb && !seen_invalid_instr) begin
+        // If any bit of instr is X/Z, reduction XOR (^instr) will be X.
+        if (^fetch_mon.instr === 1'bx) begin
+          seen_invalid_instr <= 1'b1;
+          $display("[%0t] Detected invalid/X instruction at PC=0x%08h, starting drain.",
+                   $time, fetch_mon.pc);
+        end
+      end
+
+      // Once we've seen an invalid instr, count some cycles to let the pipe drain.
+      if (seen_invalid_instr && drain_counter < PIPE_DRAIN_CYCLES)
+        drain_counter <= drain_counter + 1;
     end
   end
 
@@ -208,9 +212,78 @@ module ooo_top_tb;
           last_mispredict_tag     <= dut.mispredict_tag;
           seen_mispredict_for_tag <= 1'b1;
         end
-        // If same tag repeats, we suppress extra prints to avoid spam
       end
     end
+  end
+
+  // ---------------- Architectural state check (a0/a1) ----------------
+  task automatic check_arch_state;
+    logic [6:0] p_x10, p_x11;
+    logic [31:0] v_x10, v_x11;
+    logic [31:0] exp_a0, exp_a1;
+
+    // Physical indices via map table (x10 = a0, x11 = a1)
+    p_x10 = dut.u_rename.u_map_table.map[10];
+    p_x11 = dut.u_rename.u_map_table.map[11];
+
+    // Values from PRF
+    v_x10 = dut.u_phys_reg.prf[p_x10];
+    v_x11 = dut.u_phys_reg.prf[p_x11];
+
+    $display("Final a0/x10: p=%0d val=0x%08h", p_x10, v_x10);
+    $display("Final a1/x11: p=%0d val=0x%08h", p_x11, v_x11);
+
+    // Golden values
+    exp_a0 = 32'h0000_0000;
+    exp_a1 = 32'h1214_1240; // 303305280
+
+    if (v_x10 !== exp_a0) begin
+      $error("a0/x10 mismatch: got 0x%08h, expected 0x%08h", v_x10, exp_a0);
+    end else begin
+      $display("a0/x10 OK: 0x%08h", v_x10);
+    end
+
+    if (v_x11 !== exp_a1) begin
+      $error("a1/x11 mismatch: got 0x%08h, expected 0x%08h", v_x11, exp_a1);
+    end else begin
+      $display("a1/x11 OK: 0x%08h", v_x11);
+    end
+  endtask
+
+  // ---------------- Main control: reset, run, end-early ----------------
+  initial begin
+    $display("=== Starting ooo_top integration test ===");
+
+    exec_ready = 1'b1;
+
+    // Apply reset for a few cycles
+    reset = 1'b1;
+    run_cycles(5);
+
+    reset = 1'b0;
+    $display("[%0t] Deassert reset", $time);
+    $display("[%0t] Warm-up: letting instructions flow", $time);
+
+    // Run until we either:
+    //  - detect invalid/X instructions and let pipe drain, OR
+    //  - hit MAX_CYCLES as a safety timeout.
+    for (int cyc = 0; cyc < MAX_CYCLES; cyc++) begin
+      run_cycles(1);
+
+      if (seen_invalid_instr && drain_counter >= PIPE_DRAIN_CYCLES) begin
+        $display("[%0t] Program appears done (no more valid instructions, pipe drained).",
+                 $time);
+        check_arch_state();
+        $display("[%0t] Ending ooo_top integration test", $time);
+        $finish;
+      end
+    end
+
+    // Fallback timeout
+    $error("Simulation timeout: did not reach quiescent state within %0d cycles.", MAX_CYCLES);
+    check_arch_state();
+    $display("[%0t] Ending ooo_top integration test (timeout path)", $time);
+    $finish;
   end
 
 endmodule
