@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 import types_pkg::*;
 
-module ooo_top_tb;
+module r_i_type_tb;
 
   // ---------------- Clock / Reset / DUT ----------------
   logic clk   = 0;
