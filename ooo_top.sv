@@ -95,6 +95,8 @@ module ooo_top (
     // Update free_list
     logic [6:0] preg_old;
     logic valid_retired;
+    // Signal LSQ
+    logic [4:0] rob_head;
     
     // FU
     alu_data alu_out;
@@ -221,13 +223,15 @@ module ooo_top (
         .preg_old(preg_old),
         .valid_retired(valid_retired),
         
+        // Signal LSQ
+        .head(rob_head),
+        
         // Mispredict 
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
         .ptr(rob_index),
         
         .full(rob_full)
-//        .retired_ptr(retired_ptr)
     );
     
     // Read data from physical register file
@@ -291,10 +295,13 @@ module ooo_top (
         .mem_rs_data(rs_mem),
         
         // From ROB
+        .retired(valid_retired),
+        .rob_head(rob_head),
         .curr_rob_tag(rob_index),
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
         
+        // PRF 
         .ps1_alu_data(ps1_out_alu),
         .ps2_alu_data(ps2_out_alu),
         .ps1_b_data(ps1_out_b),

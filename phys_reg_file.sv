@@ -44,13 +44,13 @@ module phys_reg_file(
                 prf[i] <= '0;
             end
         end else begin
-            if (write_alu_en) begin
+            if (write_alu_en && pd_alu_in != '0) begin
                 prf[pd_alu_in] <= data_alu_in;
             end
-            if (write_b_en) begin
+            if (write_b_en && pd_b_in != '0) begin
                 prf[pd_b_in] <= data_b_in;
             end
-            if (write_mem_en) begin
+            if (write_mem_en && pd_mem_in != '0) begin
                 prf[pd_mem_in] <= data_mem_in;
             end
         end
