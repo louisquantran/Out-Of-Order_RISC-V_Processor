@@ -83,5 +83,15 @@ package types_pkg;
         logic jalr_bne_signal;
         logic [31:0] pc;
         logic [31:0] data;
+        logic [4:0] rob_fu_b;
     } b_data;
+    
+    typedef struct packed {
+        logic valid;
+        logic [31:0] addr;
+        logic [6:0] rob_tag;
+        logic [31:0] ps2_data;
+        logic [6:0] pd;
+        logic sw_sh_signal;
+    } lsq;
 endpackage 
