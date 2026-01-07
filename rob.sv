@@ -1,15 +1,16 @@
+`timescale 1ns/1ps
 import types_pkg::*;
 
 module rob (
-    input  logic clk,
-    input  logic reset,
-    
+    input logic clk,
+    input logic reset,
+
     // from Dispatch stage
-    input  logic write_en,
-    input  logic [6:0] pd_new_in,
-    input  logic [6:0] pd_old_in,
+    input logic write_en,
+    input logic [6:0] pd_new_in,
+    input logic [6:0] pd_old_in,
     input logic [31:0] pc_in,
-    
+
     // from FUs
     input logic fu_alu_done,
     input logic fu_b_done,
@@ -17,88 +18,142 @@ module rob (
     input logic [4:0] rob_fu_alu,
     input logic [4:0] rob_fu_b,
     input logic [4:0] rob_fu_mem,
+    input logic [4:0] store_rob_tag,
+    input logic store_lsq_done,
     input logic br_mispredict,
     input logic [4:0] br_mispredict_tag,
-    
+
     // Update free_list
     output logic [6:0] preg_old,
     output logic valid_retired,
-    
-    // Signal LSQ to put data into memory
+
+    // Signal LSQ to put data into memory (RETIRING TAG!)
     output logic [4:0] head,
 
-    // Global mispredict 
+    // Global mispredict
     output logic mispredict,
     output logic [4:0] mispredict_tag,
+    output logic [31:0] mispredict_pc,
     output logic [4:0] ptr,
 
     output logic full
-//    output logic [4:0] retired_ptr
 );
-//    assign retired_ptr = r_ptr; 
+
+    // ROB storage (16 entries)
+    rob_data rob_table [0:15];
+
+    logic [3:0] w_ptr, r_ptr;
+    logic [4:0] ctr; 
+
+    logic [3:0] alu_tag, b_tag, mem_tag, st_tag, br_tag;
+
+    assign alu_tag = rob_fu_alu[3:0];
+    assign b_tag = rob_fu_b[3:0];
+    assign mem_tag = rob_fu_mem[3:0];
+    assign st_tag = store_rob_tag[3:0];
+    assign br_tag = br_mispredict_tag[3:0];
+
+    // Outputs 
+    assign full = (ctr == 5'd16);
+    assign ptr = {1'b0, w_ptr};
 
     assign mispredict = br_mispredict;
     assign mispredict_tag = br_mispredict_tag;
-    rob_data rob_table[0:15];
-    
-    logic [4:0]  w_ptr, r_ptr;      
-    assign ptr = w_ptr;
-    assign head = r_ptr;
-    
-    logic [4:0]  ctr;            
-    
-    assign full = (ctr == 16); 
-    
-    logic do_write;           
-    logic do_retire;
-    
-    assign do_retire = (ctr!=0) && rob_table[r_ptr].complete && rob_table[r_ptr].valid;
-    assign do_write = write_en && !full;
+    assign mispredict_pc = rob_table[br_tag].pc;   // valid when mispredict asserted
+
+    logic [4:0] head_q;
+    assign head = head_q;
+
+    // Helpers
+    logic do_write, do_retire;
+
+    assign do_write = write_en && !full && !br_mispredict;
+
+    // retire when head is valid+complete and ROB not empty
+    assign do_retire = (ctr != 5'd0) &&
+                       rob_table[r_ptr].valid &&
+                       rob_table[r_ptr].complete &&
+                       !br_mispredict;
+
+    // Returns 1 if idx is in the circular half-open interval [start, end_excl)
+    function automatic logic in_flush_region(
+        input logic [3:0] idx,
+        input logic [3:0] start,
+        input logic [3:0] end_excl
+    );
+        if (start == end_excl) in_flush_region = 1'b0;
+        else if (start < end_excl) in_flush_region = (idx >= start) && (idx < end_excl);
+        else in_flush_region = (idx >= start) || (idx < end_excl);
+    endfunction
 
     always_ff @(posedge clk) begin
         if (reset) begin
-            w_ptr    <= '0;
-            r_ptr    <= '0;
-            ctr      <= '0;
+            w_ptr <= 4'd0;
+            r_ptr <= 4'd0;
+            ctr <= 5'd0;
+
+            preg_old <= '0;
+            valid_retired <= 1'b0;
+
+            head_q <= 5'd0;
+
             for (int i = 0; i < 16; i++) begin
                 rob_table[i] <= '0;
             end
+
         end else begin
+            // default outputs each cycle
             valid_retired <= 1'b0;
-            // Update the complete column for a specific instruction
-            if (fu_alu_done && rob_table[rob_fu_alu].valid) begin
-                rob_table[rob_fu_alu].complete <= 1'b1;
-            end
-            if (fu_b_done && rob_table[rob_fu_b].valid) begin
-                rob_table[rob_fu_b].complete <= 1'b1;
-            end
-            if (fu_mem_done && rob_table[rob_fu_mem].valid) begin
-                rob_table[rob_fu_mem].complete <= 1'b1;
-            end
-            // Mispredict operation
+
+            // Capture current head tag every cycle 
+            head_q <= {1'b0, r_ptr};
+
+            // Mark completion from FUs/LSQ
+            if (fu_alu_done && rob_table[alu_tag].valid)
+                rob_table[alu_tag].complete <= 1'b1;
+
+            if (fu_b_done && rob_table[b_tag].valid)
+                rob_table[b_tag].complete <= 1'b1;
+
+            if (fu_mem_done && rob_table[mem_tag].valid)
+                rob_table[mem_tag].complete <= 1'b1;
+
+            if (store_lsq_done && rob_table[st_tag].valid)
+                rob_table[st_tag].complete <= 1'b1;
+
+            // Mispredict flush (highest priority)
+            // Keep entries up through br_tag, flush younger: [br_tag+1, old_w_ptr)
             if (br_mispredict) begin
-                automatic logic [4:0] old_w = w_ptr;            
-                automatic logic [4:0] re_ptr = (br_mispredict_tag==15)?0:br_mispredict_tag+1;  
-                automatic logic [4:0] newcnt = (re_ptr >= r_ptr) ? (re_ptr - r_ptr) : (5'd16 - r_ptr + re_ptr);
-        
-                for (logic [4:0] i=re_ptr; i!=old_w; i=(i==15)?0:i+1) begin
-                    rob_table[i] <= '0;
+                logic [3:0] old_w;
+                logic [3:0] re_ptr;
+                logic [4:0] newcnt;
+
+                old_w  = w_ptr;
+                re_ptr = br_tag + 4'd1; // wraps
+
+                // remaining entries from r_ptr up to re_ptr (exclusive), mod16
+                newcnt = {1'b0, re_ptr} - {1'b0, r_ptr};
+
+                for (int j = 0; j < 16; j++) begin
+                    if (in_flush_region(j[3:0], re_ptr, old_w)) begin
+                        rob_table[j] <= '0;
+                    end
                 end
-                
+
                 w_ptr <= re_ptr;
                 ctr <= newcnt;
             end
             else begin
-                // inform reservation station an instruction is retired, 
-                // also reset that row in the table, advance r_ptr by 1
+                // Retire head
                 if (do_retire) begin
                     preg_old <= rob_table[r_ptr].pd_old;
                     valid_retired <= 1'b1;
+
                     rob_table[r_ptr] <= '0;
-                    r_ptr <= (r_ptr == 5'd15) ? 5'b0 : r_ptr + 1;
+                    r_ptr <= r_ptr + 4'd1; // wraps
                 end
-                
-                // Dispatch instruction to ROB
+
+                // Enqueue new entry
                 if (do_write) begin
                     rob_table[w_ptr].pd_new <= pd_new_in;
                     rob_table[w_ptr].pd_old <= pd_old_in;
@@ -106,14 +161,17 @@ module rob (
                     rob_table[w_ptr].complete <= 1'b0;
                     rob_table[w_ptr].valid <= 1'b1;
                     rob_table[w_ptr].rob_index <= w_ptr;
-                    w_ptr <= (w_ptr == 5'd15) ? 5'b0 : w_ptr + 1;
+
+                    w_ptr <= w_ptr + 4'd1; // wraps
                 end
+
                 unique case ({do_retire, do_write})
-                  2'b10: ctr <= ctr - 5'd1;
-                  2'b01: ctr <= ctr + 5'd1; 
-                  default: ctr <= ctr;     
+                    2'b10: ctr <= ctr - 5'd1;
+                    2'b01: ctr <= ctr + 5'd1;
+                    default: ctr <= ctr;
                 endcase
             end
         end
     end
+
 endmodule

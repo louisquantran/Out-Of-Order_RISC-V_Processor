@@ -8,7 +8,7 @@ module i_cache (
     initial begin
         $readmemh("swr.mem", instr_mem_hex);
         for (logic [9:0] i = 0; i <= 551; i++) begin
-            automatic logic [9:0] base = i * 4;
+            automatic int base = i * 4;
             instr_mem[i] = {
                 instr_mem_hex[base+3],
                 instr_mem_hex[base+2],

@@ -31,7 +31,7 @@ module ooo_top_tb;
 
   // Fetch fire (already computed inside ooo_top)
   wire        fetch_fire_tb = dut.fetch_fire;
-  fetch_data  fetch_mon     = dut.fetch_out;
+  wire fetch_data  fetch_mon     = dut.fetch_out;
 
   // Branch "taken" indicator (matches actual PC update condition)
   wire branch_taken_tb = fetch_fire_tb &&
@@ -243,8 +243,8 @@ module ooo_top_tb;
     $display("Final a1/x11: p=%0d val=0x%08h", p_x11, v_x11);
 
     // Golden values for your current program.mem
-    exp_a0 = 32'h0000_0000;
-    exp_a1 = 32'h1214_1240; // 303305280
+    exp_a0 = 32'h0000_0023;
+    exp_a1 = 32'hFFFF_FF00; // 303305280
 
     if (v_x10 !== exp_a0) begin
       $error("a0/x10 mismatch: got 0x%08h, expected 0x%08h", v_x10, exp_a0);

@@ -55,6 +55,7 @@ package types_pkg;
         logic [4:0] rob_index;
         logic [1:0] fu;
         logic ready;
+        logic [15:0] seq;
         logic [31:0] pc;
     } rs_data;
     
@@ -88,10 +89,14 @@ package types_pkg;
     
     typedef struct packed {
         logic valid;
+        logic [31:0] pc;
+        logic [4:0] rob_tag;
         logic [31:0] addr;
-        logic [6:0] rob_tag;
         logic [31:0] ps2_data;
         logic [6:0] pd;
+        logic [2:0] func3;
         logic sw_sh_signal;
+        logic store;
+        logic valid_data;
     } lsq;
 endpackage 
