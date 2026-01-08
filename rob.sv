@@ -39,11 +39,10 @@ module rob (
     output logic full
 );
 
-    // ROB storage (16 entries)
     rob_data rob_table [0:15];
 
     logic [3:0] w_ptr, r_ptr;
-    logic [4:0] ctr; 
+    logic [4:0] ctr;
 
     logic [3:0] alu_tag, b_tag, mem_tag, st_tag, br_tag;
 
@@ -53,29 +52,24 @@ module rob (
     assign st_tag = store_rob_tag[3:0];
     assign br_tag = br_mispredict_tag[3:0];
 
-    // Outputs 
     assign full = (ctr == 5'd16);
     assign ptr = {1'b0, w_ptr};
 
     assign mispredict = br_mispredict;
     assign mispredict_tag = br_mispredict_tag;
-    assign mispredict_pc = rob_table[br_tag].pc;   // valid when mispredict asserted
+    assign mispredict_pc = rob_table[br_tag].pc;
 
     logic [4:0] head_q;
     assign head = head_q;
 
-    // Helpers
     logic do_write, do_retire;
-
     assign do_write = write_en && !full && !br_mispredict;
 
-    // retire when head is valid+complete and ROB not empty
     assign do_retire = (ctr != 5'd0) &&
                        rob_table[r_ptr].valid &&
                        rob_table[r_ptr].complete &&
                        !br_mispredict;
 
-    // Returns 1 if idx is in the circular half-open interval [start, end_excl)
     function automatic logic in_flush_region(
         input logic [3:0] idx,
         input logic [3:0] start,
@@ -90,49 +84,33 @@ module rob (
         if (reset) begin
             w_ptr <= 4'd0;
             r_ptr <= 4'd0;
-            ctr <= 5'd0;
+            ctr   <= 5'd0;
 
-            preg_old <= '0;
-            valid_retired <= 1'b0;
+            preg_old       <= '0;
+            valid_retired  <= 1'b0;
+            head_q         <= 5'd0;
 
-            head_q <= 5'd0;
-
-            for (int i = 0; i < 16; i++) begin
-                rob_table[i] <= '0;
-            end
+            for (int i = 0; i < 16; i++) rob_table[i] <= '0;
 
         end else begin
-            // default outputs each cycle
             valid_retired <= 1'b0;
-
-            // Capture current head tag every cycle 
             head_q <= {1'b0, r_ptr};
 
-            // Mark completion from FUs/LSQ
-            if (fu_alu_done && rob_table[alu_tag].valid)
-                rob_table[alu_tag].complete <= 1'b1;
+            if (fu_alu_done && rob_table[alu_tag].valid) rob_table[alu_tag].complete <= 1'b1;
+            if (fu_b_done   && rob_table[b_tag].valid) rob_table[b_tag].complete   <= 1'b1;
+            if (fu_mem_done && rob_table[mem_tag].valid) rob_table[mem_tag].complete <= 1'b1;
+            if (store_lsq_done && rob_table[st_tag].valid) rob_table[st_tag].complete <= 1'b1;
 
-            if (fu_b_done && rob_table[b_tag].valid)
-                rob_table[b_tag].complete <= 1'b1;
-
-            if (fu_mem_done && rob_table[mem_tag].valid)
-                rob_table[mem_tag].complete <= 1'b1;
-
-            if (store_lsq_done && rob_table[st_tag].valid)
-                rob_table[st_tag].complete <= 1'b1;
-
-            // Mispredict flush (highest priority)
-            // Keep entries up through br_tag, flush younger: [br_tag+1, old_w_ptr)
             if (br_mispredict) begin
                 logic [3:0] old_w;
                 logic [3:0] re_ptr;
                 logic [4:0] newcnt;
 
                 old_w  = w_ptr;
-                re_ptr = br_tag + 4'd1; // wraps
+                re_ptr = br_tag + 4'd1;
 
-                // remaining entries from r_ptr up to re_ptr (exclusive), mod16
-                newcnt = {1'b0, re_ptr} - {1'b0, r_ptr};
+                if (re_ptr >= r_ptr) newcnt = {1'b0, re_ptr} - {1'b0, r_ptr};
+                else newcnt = 5'd16 - {1'b0, r_ptr} + {1'b0, re_ptr};
 
                 for (int j = 0; j < 16; j++) begin
                     if (in_flush_region(j[3:0], re_ptr, old_w)) begin
@@ -142,18 +120,16 @@ module rob (
 
                 w_ptr <= re_ptr;
                 ctr <= newcnt;
-            end
-            else begin
-                // Retire head
+
+            end else begin
                 if (do_retire) begin
                     preg_old <= rob_table[r_ptr].pd_old;
                     valid_retired <= 1'b1;
 
                     rob_table[r_ptr] <= '0;
-                    r_ptr <= r_ptr + 4'd1; // wraps
+                    r_ptr <= r_ptr + 4'd1;
                 end
 
-                // Enqueue new entry
                 if (do_write) begin
                     rob_table[w_ptr].pd_new <= pd_new_in;
                     rob_table[w_ptr].pd_old <= pd_old_in;
@@ -162,7 +138,7 @@ module rob (
                     rob_table[w_ptr].valid <= 1'b1;
                     rob_table[w_ptr].rob_index <= w_ptr;
 
-                    w_ptr <= w_ptr + 4'd1; // wraps
+                    w_ptr <= w_ptr + 4'd1;
                 end
 
                 unique case ({do_retire, do_write})
