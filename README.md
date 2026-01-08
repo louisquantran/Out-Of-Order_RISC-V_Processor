@@ -1,6 +1,9 @@
 # Out-Of-Order RISC-V Processor
 A **1‑wide out‑of‑order (OoO) RISC‑V processor** implemented in **SystemVerilog** (UCLA ECE‑189, honors session of ECE‑M116C).
 
+## Processor Design
+![Alt text](images/OoO_Processor_Design.png)
+
 ## Architecture Overview
 
 ### Pipeline Frontend: I-Cache → Fetch → Decode
