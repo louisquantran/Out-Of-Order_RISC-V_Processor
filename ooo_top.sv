@@ -29,9 +29,12 @@ module ooo_top (
     logic      v_sb;
     logic      r_from_decode;
 
+    logic        mispredict;
+
     skid_buffer #(.T(fetch_data)) u_fb (
         .clk       (clk),
         .reset     (reset),
+        .mispredict(mispredict),
         .valid_in  (v_fetch & ~reset),
         .data_in   (fetch_out),
         .ready_in  (r_to_fetch),
@@ -62,21 +65,22 @@ module ooo_top (
 
     // From Rename to Skid Buffer
     logic r_to_sb_d;
+    
+    // Post-Rename Skid Buffer
+    logic r_sb_to_r;
 
     // Post-Decode Skid Buffer
     skid_buffer #(.T(decode_data)) u_db (
         .clk       (clk),
         .reset     (reset),
+        .mispredict(mispredict),
         .valid_in  (v_decode),
         .data_in   (decode_out),
-        .ready_in  (r_sb_to_decode),
-        .ready_out (r_to_sb_d),
+        .ready_in  (r_sb_to_r),
+        .ready_out (r_from_decode),
         .valid_out (v_dsb),
         .data_out  (sb_d_out)
     );
-
-    // Post-Rename Skid Buffer
-    logic r_sb_to_r;
 
     // From Rename to Skid Buffer
     rename_data rename_out;
@@ -88,7 +92,6 @@ module ooo_top (
     logic [4:0]  rob_index;
     logic [4:0]  mispredict_tag;
     logic [31:0] mispredict_pc;
-    logic        mispredict;
 
     // Update free_list
     logic [6:0]  preg_old;
@@ -119,13 +122,22 @@ module ooo_top (
         .clk        (clk),
         .reset      (reset),
 
+        // Upstream
         .valid_in   (v_dsb),
         .data_in    (sb_d_out),
         .ready_in   (r_to_sb_d),
 
+        // From ROB
         .write_en   (valid_retired),
         .rob_data_in(preg_old),
+
+        // NEW: use ROB-domain tag
+        .rob_next_tag(rob_index),
+
         .mispredict (mispredict),
+        .mispredict_tag(mispredict_tag),
+        .hit(b_out.hit),
+        .hit_tag(b_out.hit_tag), 
 
         .data_out   (rename_out),
         .valid_out  (r_to_bf_di),
@@ -142,6 +154,7 @@ module ooo_top (
     skid_buffer #(.T(rename_data)) u_rb (
         .clk       (clk),
         .reset     (reset),
+        .mispredict(mispredict),
 
         .valid_in  (r_to_bf_di),
         .data_in   (rename_out),
@@ -151,13 +164,13 @@ module ooo_top (
         .valid_out (v_sb_to_di),
         .data_out  (sb_to_di_out)
     );
-
+    
     // LSQ allocation signals from dispatch
     logic        lsq_alloc_valid_out;
     logic [4:0]  lsq_dispatch_rob_tag;
     logic [31:0] lsq_dispatch_pc;
-    logic lsq_full;
-    
+    logic        lsq_full;
+
     dispatch u_dispatch (
         .clk(clk),
         .reset(reset),
@@ -230,8 +243,8 @@ module ooo_top (
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
         .mispredict_pc(mispredict_pc),
-        .ptr(rob_index),
 
+        .ptr(rob_index),
         .full(rob_full)
     );
 
@@ -321,16 +334,14 @@ module ooo_top (
         .store_lsq_done(store_lsq_done)
     );
 
-    // PC update
+    // PC update (UPDATED: redirect priority, not gated by fetch_fire)
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             pc_reg <= 32'h0000_0000;
+        end else if (b_out.fu_b_done && b_out.jalr_bne_signal) begin
+            pc_reg <= b_out.pc;
         end else if (fetch_fire) begin
-            if (b_out.fu_b_done && b_out.jalr_bne_signal) begin
-                pc_reg <= b_out.pc;
-            end else begin
-                pc_reg <= pc_reg + 32'd4;
-            end
+            pc_reg <= pc_reg + 32'd4;
         end
     end
 
