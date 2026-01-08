@@ -8,9 +8,12 @@ module ooo_top_tb;
   logic reset = 1;
   logic exec_ready;
 
-  localparam int CLK_PERIOD        = 10;   // 100 MHz
-  localparam int MAX_CYCLES        = 1000; // safety timeout
-  localparam int PIPE_DRAIN_CYCLES = 50;   // after hitting invalid instr
+  localparam int CLK_PERIOD        = 10;    // 100 MHz
+  localparam int MAX_CYCLES        = 1000;  // safety timeout
+  localparam int PIPE_DRAIN_CYCLES = 50;    // after hitting invalid instr
+
+  // NEW: stall watchdog threshold
+  localparam int STALL_LIMIT_CYCLES = 80;
 
   // Clock
   always #(CLK_PERIOD/2) clk = ~clk;
@@ -33,19 +36,17 @@ module ooo_top_tb;
   wire        fetch_fire_tb = dut.fetch_fire;
   wire fetch_data  fetch_mon     = dut.fetch_out;
 
+  // If you have these in ooo_top, tap them directly (used for stability checks)
+  // NOTE: if your top-level names differ, update these to match.
+  wire v_fetch_tb   = dut.v_fetch;
+  wire r_to_fetch_tb = dut.r_to_fetch;
+
   // Branch "taken" indicator (matches actual PC update condition)
   wire branch_taken_tb = fetch_fire_tb &&
                          dut.b_out.fu_b_done &&
                          dut.b_out.jalr_bne_signal;
 
   // ---------------- PC Checker ----------------
-  // Checks that whenever a fetch "fires", the next PC is either:
-  //   - prev_pc + 4 (sequential), OR
-  //   - branch target (for taken branch)
-  //
-  // It uses the *previous cycle's* fetch_fire/branch_taken, mirroring
-  // the fact that pc_reg is updated on that same clock edge.
-
   logic [31:0] prev_pc;
   logic        prev_branch_taken;
   logic [31:0] prev_branch_pc;
@@ -58,7 +59,6 @@ module ooo_top_tb;
       prev_branch_pc    <= 32'h0000_0000;
       prev_fetch_fire   <= 1'b0;
     end else begin
-      // We check PC one cycle after a fetch_fire
       if (prev_fetch_fire) begin
         if (prev_branch_taken) begin
           if (dut.pc_reg !== prev_branch_pc) begin
@@ -79,7 +79,6 @@ module ooo_top_tb;
         end
       end
 
-      // Update history for next cycle
       prev_pc           <= dut.pc_reg;
       prev_branch_taken <= branch_taken_tb;
       prev_branch_pc    <= dut.b_out.pc;
@@ -96,9 +95,7 @@ module ooo_top_tb;
       seen_invalid_instr <= 1'b0;
       drain_counter      <= 0;
     end else begin
-      // Detect first time we fetch an invalid/unknown instruction
       if (fetch_fire_tb && !seen_invalid_instr) begin
-        // If any bit of instr is X/Z, reduction XOR (^instr) will be X.
         if (^fetch_mon.instr === 1'bx) begin
           seen_invalid_instr <= 1'b1;
           $display("[%0t] Detected invalid/X instruction at PC=0x%08h, starting drain.",
@@ -106,9 +103,154 @@ module ooo_top_tb;
         end
       end
 
-      // Once we've seen an invalid instr, count some cycles to let the pipe drain.
       if (seen_invalid_instr && drain_counter < PIPE_DRAIN_CYCLES)
         drain_counter <= drain_counter + 1;
+    end
+  end
+
+  // ============================================================
+  // NEW: Ready/Valid stability checkers
+  // ============================================================
+
+  // 1) Fetch payload must be stable while v_fetch && !r_to_fetch
+  // This will catch the common bug: "valid_out=1 always" + changing PC/data while downstream not ready
+  fetch_data fetch_hold;
+  logic      fetch_holding;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      fetch_hold    <= '0;
+      fetch_holding <= 1'b0;
+    end else begin
+      if (v_fetch_tb && !r_to_fetch_tb) begin
+        if (!fetch_holding) begin
+          fetch_hold    <= dut.fetch_out;
+          fetch_holding <= 1'b1;
+        end else begin
+          if (dut.fetch_out !== fetch_hold) begin
+            $error("[%0t] FETCH PAYLOAD CHANGED while stalled (v_fetch=1, r_to_fetch=0). Held pc=0x%08h instr=0x%08h, now pc=0x%08h instr=0x%08h",
+                   $time,
+                   fetch_hold.pc, fetch_hold.instr,
+                   dut.fetch_out.pc, dut.fetch_out.instr);
+          end
+        end
+      end else begin
+        fetch_holding <= 1'b0;
+      end
+    end
+  end
+
+  // 2) Rename output must be stable while rename.valid_out && !rename.ready_out
+  // NOTE: update instance path if your rename instance isn't "u_rename"
+  rename_data ren_hold;
+  logic       ren_holding;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      ren_hold    <= '0;
+      ren_holding <= 1'b0;
+    end else begin
+      if (dut.u_rename.valid_out && !dut.u_rename.ready_out) begin
+        if (!ren_holding) begin
+          ren_hold    <= dut.rename_out;
+          ren_holding <= 1'b1;
+        end else begin
+          if (dut.rename_out !== ren_hold) begin
+            $error("[%0t] RENAME_OUT CHANGED while stalled (rename.valid_out=1, rename.ready_out=0). Held pc=0x%08h rob_tag=%0d, now pc=0x%08h rob_tag=%0d",
+                   $time,
+                   ren_hold.pc, ren_hold.rob_tag,
+                   dut.rename_out.pc, dut.rename_out.rob_tag);
+          end
+        end
+      end else begin
+        ren_holding <= 1'b0;
+      end
+    end
+  end
+
+  // 3) Post-rename skid output must be stable while v_sb_to_di && !r_di_to_sb
+  rename_data sb_hold;
+  logic       sb_holding;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      sb_hold    <= '0;
+      sb_holding <= 1'b0;
+    end else begin
+      if (dut.v_sb_to_di && !dut.r_di_to_sb) begin
+        if (!sb_holding) begin
+          sb_hold    <= dut.sb_to_di_out;
+          sb_holding <= 1'b1;
+        end else begin
+          if (dut.sb_to_di_out !== sb_hold) begin
+            $error("[%0t] SB_TO_DI_OUT CHANGED while stalled (v_sb_to_di=1, r_di_to_sb=0). Held pc=0x%08h rob_tag=%0d, now pc=0x%08h rob_tag=%0d",
+                   $time,
+                   sb_hold.pc, sb_hold.rob_tag,
+                   dut.sb_to_di_out.pc, dut.sb_to_di_out.rob_tag);
+          end
+        end
+      end else begin
+        sb_holding <= 1'b0;
+      end
+    end
+  end
+
+  // ============================================================
+  // NEW: Forward-progress watchdog
+  // ============================================================
+  int stall_ctr;
+
+  function automatic bit made_progress_this_cycle;
+    // Expand this list as needed; the idea is to catch "everything stopped"
+    made_progress_this_cycle =
+      fetch_fire_tb ||
+      dut.rob_write_en ||
+      dut.alu_issued || dut.mem_issued || dut.b_issued ||
+      dut.alu_out.fu_alu_done || dut.mem_out.fu_mem_done || dut.b_out.fu_b_done ||
+      dut.mispredict ||
+      dut.b_out.hit;
+  endfunction
+
+  task automatic dump_stall_snapshot;
+    $display("----------- STALL SNAPSHOT @ %0t -----------", $time);
+    $display("pc_reg=0x%08h", dut.pc_reg);
+    $display("fetch_fire=%0b v_fetch=%0b r_to_fetch=%0b", fetch_fire_tb, v_fetch_tb, r_to_fetch_tb);
+    $display("v_decode=%0b", dut.v_decode);
+
+    // Rename handshake
+    $display("rename.valid_out=%0b rename.ready_out=%0b",
+             dut.u_rename.valid_out, dut.u_rename.ready_out);
+
+    // Post-rename skid handshake
+    $display("v_sb_to_di=%0b r_di_to_sb=%0b", dut.v_sb_to_di, dut.r_di_to_sb);
+
+    // ROB
+    $display("rob_write_en=%0b rob_index=%0d", dut.rob_write_en, dut.rob_index);
+
+    // FU status
+    $display("alu_done=%0b mem_done=%0b br_done=%0b",
+             dut.alu_out.fu_alu_done, dut.mem_out.fu_mem_done, dut.b_out.fu_b_done);
+
+    $display("mispredict=%0b mispredict_tag=%0d hit=%0b",
+             dut.mispredict, dut.mispredict_tag, dut.b_out.hit);
+
+    $display("--------------------------------------------");
+  endtask
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      stall_ctr <= 0;
+    end else begin
+      if (made_progress_this_cycle()) begin
+        stall_ctr <= 0;
+      end else begin
+        stall_ctr <= stall_ctr + 1;
+        if (stall_ctr == STALL_LIMIT_CYCLES) begin
+          dump_stall_snapshot();
+          $fatal(1, "[%0t] DEADLOCK: no forward progress for %0d cycles.",
+                 $time, STALL_LIMIT_CYCLES);
+        end
+      end
     end
   end
 
@@ -231,41 +373,31 @@ module ooo_top_tb;
     logic [31:0] v_x10, v_x11;
     logic [31:0] exp_a0, exp_a1;
 
-    // Physical indices via map table (x10 = a0, x11 = a1)
     p_x10 = dut.u_rename.u_map_table.map[10];
     p_x11 = dut.u_rename.u_map_table.map[11];
 
-    // Values from PRF
     v_x10 = dut.u_phys_reg.prf[p_x10];
     v_x11 = dut.u_phys_reg.prf[p_x11];
 
     $display("Final a0/x10: p=%0d val=0x%08h", p_x10, v_x10);
     $display("Final a1/x11: p=%0d val=0x%08h", p_x11, v_x11);
 
-    // Golden values for your current program.mem
-    exp_a0 = 32'h0000_0023;
-    exp_a1 = 32'hFFFF_FF00; // 303305280
+    exp_a0 = 32'h0000_0005;
+    exp_a1 = 32'h0000_0005;
 
-    if (v_x10 !== exp_a0) begin
-      $error("a0/x10 mismatch: got 0x%08h, expected 0x%08h", v_x10, exp_a0);
-    end else begin
-      $display("a0/x10 OK: 0x%08h", v_x10);
-    end
+    if (v_x10 !== exp_a0) $error("a0/x10 mismatch: got 0x%08h, expected 0x%08h", v_x10, exp_a0);
+    else                 $display("a0/x10 OK: 0x%08h", v_x10);
 
-    if (v_x11 !== exp_a1) begin
-      $error("a1/x11 mismatch: got 0x%08h, expected 0x%08h", v_x11, exp_a1);
-    end else begin
-      $display("a1/x11 OK: 0x%08h", v_x11);
-    end
+    if (v_x11 !== exp_a1) $error("a1/x11 mismatch: got 0x%08h, expected 0x%08h", v_x11, exp_a1);
+    else                 $display("a1/x11 OK: 0x%08h", v_x11);
   endtask
 
   // ---------------- Main control: reset, run, end-early ----------------
   initial begin
     $display("=== Starting ooo_top integration test ===");
 
-    exec_ready = 1'b1; // currently unused by ooo_top, but kept for interface
+    exec_ready = 1'b1;
 
-    // Apply reset for a few cycles
     reset = 1'b1;
     run_cycles(5);
 
@@ -273,9 +405,6 @@ module ooo_top_tb;
     $display("[%0t] Deassert reset", $time);
     $display("[%0t] Warm-up: letting instructions flow", $time);
 
-    // Run until we either:
-    //  - detect invalid/X instructions and let pipe drain, OR
-    //  - hit MAX_CYCLES as a safety timeout.
     for (int cyc = 0; cyc < MAX_CYCLES; cyc++) begin
       run_cycles(1);
 
@@ -288,8 +417,8 @@ module ooo_top_tb;
       end
     end
 
-    // Fallback timeout
     $error("Simulation timeout: did not reach quiescent state within %0d cycles.", MAX_CYCLES);
+    dump_stall_snapshot();
     check_arch_state();
     $display("[%0t] Ending ooo_top integration test (timeout path)", $time);
     $finish;

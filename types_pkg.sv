@@ -80,8 +80,10 @@ package types_pkg;
         logic fu_b_done;
         logic fu_b_ready;
         logic mispredict;
+        logic hit;
         logic [4:0] mispredict_tag;
         logic jalr_bne_signal;
+        logic [4:0]  hit_tag; 
         logic [31:0] pc;
         logic [31:0] data;
         logic [4:0] rob_fu_b;
@@ -99,4 +101,15 @@ package types_pkg;
         logic store;
         logic valid_data;
     } lsq;
+
+    typedef struct packed {
+        logic valid;
+        logic [31:0] pc;
+        logic [4:0] rob_tag;
+        logic [0:31] [6:0] re_map ;
+        logic [0:127] [6:0] re_list ;
+        logic [3:0] re_ctr;
+        logic [6:0] re_r_ptr;
+        logic [6:0] re_w_ptr;
+    } rename_checkpoint;
 endpackage 

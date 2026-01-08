@@ -65,9 +65,6 @@ module ooo_top (
 
     // From Rename to Skid Buffer
     logic r_to_sb_d;
-    
-    // Post-Rename Skid Buffer
-    logic r_sb_to_r;
 
     // Post-Decode Skid Buffer
     skid_buffer #(.T(decode_data)) u_db (
@@ -76,11 +73,14 @@ module ooo_top (
         .mispredict(mispredict),
         .valid_in  (v_decode),
         .data_in   (decode_out),
-        .ready_in  (r_sb_to_r),
-        .ready_out (r_from_decode),
+        .ready_in  (r_sb_to_decode),
+        .ready_out (r_to_sb_d),
         .valid_out (v_dsb),
         .data_out  (sb_d_out)
     );
+
+    // Post-Rename Skid Buffer
+    logic r_sb_to_r;
 
     // From Rename to Skid Buffer
     rename_data rename_out;
