@@ -1,4 +1,4 @@
-# Out-Of-Order RISC-V RTL Project
+# Out-Of-Order RISC-V Processor
 A **1‑wide out‑of‑order (OoO) RISC‑V processor** implemented in **SystemVerilog** (UCLA ECE‑189, honors session of ECE‑M116C).
 
 ## Architecture Overview
