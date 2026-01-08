@@ -48,23 +48,19 @@ module fus(
     output logic store_lsq_done
 );
 
-    // branch status to ROB
     assign br_mispredict = b_out.mispredict;
     assign br_mispredict_tag = b_out.mispredict_tag;
 
     fu_alu u_alu (
         .clk(clk),
         .reset(reset),
-
         .curr_rob_tag(curr_rob_tag),
         .mispredict(mispredict),
         .mispredict_tag(mispredict_tag),
-
         .issued(alu_issued),
         .data_in(alu_rs_data),
         .ps1_data(ps1_alu_data),
         .ps2_data(ps2_alu_data),
-
         .data_out(alu_out)
     );
 
@@ -72,7 +68,6 @@ module fus(
         .clk(clk),
         .reset(reset),
 
-        // From ROB
         .retired(retired),
         .rob_head(rob_head),
 
@@ -81,19 +76,16 @@ module fus(
         .mispredict_tag(mispredict_tag),
         .mispredict_pc(mispredict_pc),
 
-        // From Dispatch (LSQ allocation)
         .dispatch_valid(dispatch_valid),
         .dispatch_rob_tag(dispatch_rob_tag),
         .lsq_dispatch_pc(lsq_dispatch_pc),
         .lsq_full_out(lsq_full_out),
 
-        // From RS and PRF
         .issued(mem_issued),
         .data_in(mem_rs_data),
         .ps1_data(ps1_mem_data),
         .ps2_data(ps2_mem_data),
 
-        // Outputs
         .data_out(mem_out),
         .store_rob_tag(store_rob_tag),
         .store_lsq_done(store_lsq_done)
@@ -102,16 +94,12 @@ module fus(
     fu_branch u_branch (
         .clk(clk),
         .reset(reset),
-
         .curr_rob_tag(curr_rob_tag),
         .mispredict_tag(mispredict_tag),
-
         .issued(b_issued),
         .data_in(b_rs_data),
-
         .ps1_data(ps1_b_data),
         .ps2_data(ps2_b_data),
-
         .data_out(b_out)
     );
 
