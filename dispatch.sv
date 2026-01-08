@@ -47,10 +47,11 @@ module dispatch(
     logic dispatch_handshake;
     assign dispatch_handshake = valid_in && ready_in;
 
-    // only allocate LSQ on load/store and when the instruction is actually accepted
     logic is_loadstore;
     assign is_loadstore = (data_in.Opcode == 7'b0000011) || (data_in.Opcode == 7'b0100011);
-    assign lsq_alloc_valid_out = is_loadstore && dispatch_handshake;
+
+    // only allocate LSQ on load/store and when actually accepted
+    assign lsq_alloc_valid_out = is_loadstore && dispatch_handshake && !mispredict;
 
     always_comb begin
         if (lsq_alloc_valid_out) begin
@@ -62,69 +63,69 @@ module dispatch(
         end
     end
 
-    logic rs_alu_full = '0;
-    logic rs_b_full = '0;
-    logic rs_mem_full = '0;
-    logic di_en_alu = '0;
-    logic di_en_b = '0;
-    logic di_en_mem = '0;
+    logic rs_alu_full, rs_b_full, rs_mem_full;
+    logic di_en_alu, di_en_b, di_en_mem;
 
     rename_data data_q;
     assign data_q = data_in;
 
     always_comb begin
+        // defaults
         ready_in = 1'b0;
         di_en_alu = 1'b0;
         di_en_b = 1'b0;
         di_en_mem = 1'b0;
 
-        unique case (data_q.fu)
-            2'b01: begin // ALU
-                ready_in = !rob_full && !rs_alu_full;
-                if (ready_in && valid_in) di_en_alu = 1'b1;
-            end
+        if (mispredict) begin
+            ready_in = 1'b1;  
+        end else begin
+            unique case (data_q.fu)
+                2'b01: begin // alu
+                    ready_in = !rob_full && !rs_alu_full;
+                    if (ready_in && valid_in) di_en_alu = 1'b1;
+                end
 
-            2'b10: begin // BR
-                ready_in = !rob_full && !rs_b_full;
-                if (ready_in && valid_in) di_en_b = 1'b1;
-            end
+                2'b10: begin // br
+                    ready_in = !rob_full && !rs_b_full;
+                    if (ready_in && valid_in) di_en_b = 1'b1;
+                end
 
-            2'b11: begin // MEM
-                ready_in = !rob_full && !rs_mem_full && !lsq_full_in;
-                if (ready_in && valid_in) di_en_mem = 1'b1;
-            end
+                2'b11: begin // mem
+                    ready_in = !rob_full && !rs_mem_full && !lsq_full_in;
+                    if (ready_in && valid_in) di_en_mem = 1'b1;
+                end
 
-            default: begin
-                ready_in = !rob_full;
-            end
-        endcase
+                default: begin
+                    ready_in = !rob_full;
+                end
+            endcase
+        end
     end
 
-    // preg ready table
     logic preg_rtable [0:127];
 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            for (logic [7:0] i = 0; i < 128; i++) begin
+            for (int i = 0; i < 128; i++) begin
+                preg_rtable[i] <= 1'b1;
+            end
+        end else if (mispredict) begin
+            for (int i = 0; i < 128; i++) begin
                 preg_rtable[i] <= 1'b1;
             end
         end else begin
-            // ALU writes
-            if (di_en_alu && data_q.pd_new != 7'd0) begin
+            if (di_en_alu && (data_q.pd_new != 7'd0)) begin
                 preg_rtable[data_q.pd_new] <= 1'b0;
             end
 
-            // MEM: loads write, stores don't
             if (di_en_mem && (data_q.pd_new != 7'd0) && (data_q.Opcode != 7'b0100011)) begin
                 preg_rtable[data_q.pd_new] <= 1'b0;
             end
 
-            // JALR writes
             if (di_en_b && (data_q.pd_new != 7'd0) && (data_q.Opcode == 7'b1100111)) begin
                 preg_rtable[data_q.pd_new] <= 1'b0;
             end
 
-            // Wakeups from CDB
             if (ps_b_ready)   preg_rtable[ps_b_in]   <= 1'b1;
             if (ps_alu_ready) preg_rtable[ps_alu_in] <= 1'b1;
             if (ps_mem_ready) preg_rtable[ps_mem_in] <= 1'b1;
