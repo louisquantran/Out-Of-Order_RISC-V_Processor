@@ -40,7 +40,7 @@ module phys_reg_file(
     logic [31:0] prf [0:127];
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            for (logic [6:0] i = 0; i < 128; i++) begin
+            for (logic [7:0] i = 0; i < 128; i++) begin
                 prf[i] <= '0;
             end
         end else begin
