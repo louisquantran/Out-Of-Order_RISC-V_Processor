@@ -382,8 +382,8 @@ module ooo_top_tb;
     $display("Final a0/x10: p=%0d val=0x%08h", p_x10, v_x10);
     $display("Final a1/x11: p=%0d val=0x%08h", p_x11, v_x11);
 
-    exp_a0 = 32'h0000_0005;
-    exp_a1 = 32'h0000_0005;
+    exp_a0 = 32'h0000_0004;
+    exp_a1 = 32'h0000_0001;
 
     if (v_x10 !== exp_a0) $error("a0/x10 mismatch: got 0x%08h, expected 0x%08h", v_x10, exp_a0);
     else                 $display("a0/x10 OK: 0x%08h", v_x10);

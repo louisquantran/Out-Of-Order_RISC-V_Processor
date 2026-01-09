@@ -6,7 +6,7 @@ module i_cache (
     logic [31:0] instr_mem [0:551];
 
     initial begin
-        $readmemh("swr.mem", instr_mem_hex);
+        $readmemh("jswr.mem", instr_mem_hex);
         for (logic [9:0] i = 0; i <= 551; i++) begin
             automatic int base = i * 4;
             instr_mem[i] = {

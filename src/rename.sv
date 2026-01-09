@@ -42,8 +42,8 @@ module rename(
     assign read_en = write_pd && rename_en;
     assign update_en = write_pd && rename_en;
 
-    logic [0:31] map [6:0];
-    logic [0:31] re_map [6:0];
+    logic [0:31] [6:0] map;
+    logic [0:31] [6:0] re_map;
 
     logic [6:0] r_ptr_list, w_ptr_list;
     logic [6:0] re_r_ptr,   re_w_ptr;
