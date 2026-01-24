@@ -96,17 +96,28 @@ module rob (
             valid_retired <= 1'b0;
             head_q <= {1'b0, r_ptr};
 
-            if (fu_alu_done && rob_table[alu_tag].valid) rob_table[alu_tag].complete <= 1'b1;
-            if (fu_b_done   && rob_table[b_tag].valid) rob_table[b_tag].complete   <= 1'b1;
-            if (fu_mem_done && rob_table[mem_tag].valid) rob_table[mem_tag].complete <= 1'b1;
-            if (store_lsq_done && rob_table[st_tag].valid) rob_table[st_tag].complete <= 1'b1;
+            if (fu_alu_done && rob_table[alu_tag].valid) begin 
+                rob_table[alu_tag].complete <= 1'b1;
+            end 
+            
+            if (fu_b_done && rob_table[b_tag].valid) begin
+                rob_table[b_tag].complete   <= 1'b1;
+            end 
 
+            if (fu_mem_done && rob_table[mem_tag].valid) begin
+                rob_table[mem_tag].complete <= 1'b1;
+            end
+
+            if (store_lsq_done && rob_table[st_tag].valid) begin
+                rob_table[st_tag].complete <= 1'b1;
+            end 
+            
             if (br_mispredict) begin
                 logic [3:0] old_w;
                 logic [3:0] re_ptr;
                 logic [4:0] newcnt;
 
-                old_w  = w_ptr;
+                old_w = w_ptr;
                 re_ptr = br_tag + 4'd1;
 
                 if (re_ptr >= r_ptr) newcnt = {1'b0, re_ptr} - {1'b0, r_ptr};

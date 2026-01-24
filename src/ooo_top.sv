@@ -12,24 +12,24 @@ module ooo_top (
 
     // Fetch
     fetch_data fetch_out;
-    logic      v_fetch;
-    logic      r_to_fetch;
+    logic v_fetch;
+    logic r_to_fetch;
 
     fetch u_fetch (
-        .pc_in     (pc_reg),
+        .pc_in (pc_reg),
         .ready_out (r_to_fetch),
         .valid_out (v_fetch),
-        .data_out  (fetch_out)
+        .data_out (fetch_out)
     );
 
     wire fetch_fire = (v_fetch & ~reset) && r_to_fetch;
 
     // Skid buffer from Fetch to Decode
     fetch_data sb_f_out;
-    logic      v_sb;
-    logic      r_from_decode;
+    logic v_sb;
+    logic r_from_decode;
 
-    logic        mispredict;
+    logic mispredict;
 
     skid_buffer #(.T(fetch_data)) u_fb (
         .clk       (clk),
@@ -45,22 +45,22 @@ module ooo_top (
 
     // Post-Decode skid buffer
     decode_data sb_d_out;
-    logic       r_sb_to_decode;
-    logic       v_dsb;
+    logic r_sb_to_decode;
+    logic v_dsb;
 
     // Decode
     decode_data decode_out;
-    logic       v_decode;
+    logic v_decode;
 
     decode u_decode (
-        .instr     (sb_f_out.instr),
-        .pc_in     (sb_f_out.pc),
-        .valid_in  (v_sb),
-        .ready_in  (r_from_decode),
+        .instr (sb_f_out.instr),
+        .pc_in (sb_f_out.pc),
+        .valid_in (v_sb),
+        .ready_in (r_from_decode),
 
         .ready_out (r_sb_to_decode),
         .valid_out (v_decode),
-        .data_out  (decode_out)
+        .data_out (decode_out)
     );
 
     // From Rename to Skid Buffer
@@ -68,15 +68,15 @@ module ooo_top (
 
     // Post-Decode Skid Buffer
     skid_buffer #(.T(decode_data)) u_db (
-        .clk       (clk),
-        .reset     (reset),
+        .clk (clk),
+        .reset (reset),
         .mispredict(mispredict),
-        .valid_in  (v_decode),
-        .data_in   (decode_out),
-        .ready_in  (r_sb_to_decode),
+        .valid_in (v_decode),
+        .data_in (decode_out),
+        .ready_in (r_sb_to_decode),
         .ready_out (r_to_sb_d),
         .valid_out (v_dsb),
-        .data_out  (sb_d_out)
+        .data_out (sb_d_out)
     );
 
     // Post-Rename Skid Buffer
@@ -84,29 +84,29 @@ module ooo_top (
 
     // From Rename to Skid Buffer
     rename_data rename_out;
-    logic       r_to_bf_di;
+    logic r_to_bf_di;
 
     // DISPATCH SIGNALS:
     // Rob
-    logic        rob_full;
-    logic [4:0]  rob_index;
-    logic [4:0]  mispredict_tag;
+    logic rob_full;
+    logic [4:0] rob_index;
+    logic [4:0] mispredict_tag;
     logic [31:0] mispredict_pc;
 
     // Update free_list
-    logic [6:0]  preg_old;
-    logic        valid_retired;
+    logic [6:0] preg_old;
+    logic valid_retired;
 
     // Signal LSQ
-    logic [4:0]  rob_head;
+    logic [4:0] rob_head;
 
     // Store completion from LSQ/FU side
-    logic [4:0]  store_rob_tag;
-    logic        store_lsq_done;
+    logic [4:0] store_rob_tag;
+    logic store_lsq_done;
 
     // FU
     alu_data alu_out;
-    b_data   b_out;
+    b_data b_out;
     mem_data mem_out;
 
     // Output data from 3 RS
@@ -119,17 +119,17 @@ module ooo_top (
     logic mem_issued;
 
     rename u_rename (
-        .clk        (clk),
-        .reset      (reset),
+        .clk (clk),
+        .reset (reset),
 
         // Upstream
-        .valid_in   (v_dsb),
-        .data_in    (sb_d_out),
-        .ready_in   (r_to_sb_d),
+        .valid_in (v_dsb),
+        .data_in (sb_d_out),
+        .ready_in (r_to_sb_d),
 
         // From ROB
-        .write_en   (valid_retired),
-        .rob_data_in(preg_old),
+        .write_en (valid_retired),
+        .rob_data_in (preg_old),
 
         // NEW: use ROB-domain tag
         .rob_next_tag(rob_index),
@@ -139,37 +139,37 @@ module ooo_top (
         .hit(b_out.hit),
         .hit_tag(b_out.hit_tag), 
 
-        .data_out   (rename_out),
-        .valid_out  (r_to_bf_di),
-        .ready_out  (r_sb_to_r)
+        .data_out (rename_out),
+        .valid_out (r_to_bf_di),
+        .ready_out (r_sb_to_r)
     );
 
     // From Dispatch to Skid Buffer
     logic r_di_to_sb;
 
     // From Skid Buffer to Dispatch
-    logic       v_sb_to_di;
+    logic v_sb_to_di;
     rename_data sb_to_di_out;
 
     skid_buffer #(.T(rename_data)) u_rb (
-        .clk       (clk),
-        .reset     (reset),
+        .clk (clk),
+        .reset (reset),
         .mispredict(mispredict),
 
-        .valid_in  (r_to_bf_di),
-        .data_in   (rename_out),
-        .ready_in  (r_sb_to_r),
+        .valid_in (r_to_bf_di),
+        .data_in (rename_out),
+        .ready_in (r_sb_to_r),
 
         .ready_out (r_di_to_sb),
         .valid_out (v_sb_to_di),
-        .data_out  (sb_to_di_out)
+        .data_out (sb_to_di_out)
     );
     
     // LSQ allocation signals from dispatch
-    logic        lsq_alloc_valid_out;
-    logic [4:0]  lsq_dispatch_rob_tag;
+    logic lsq_alloc_valid_out;
+    logic [4:0] lsq_dispatch_rob_tag;
     logic [31:0] lsq_dispatch_pc;
-    logic        lsq_full;
+    logic lsq_full;
 
     dispatch u_dispatch (
         .clk(clk),
@@ -250,7 +250,7 @@ module ooo_top (
 
     // Read data from physical register file
     logic [31:0] ps1_out_alu, ps2_out_alu;
-    logic [31:0] ps1_out_b,   ps2_out_b;
+    logic [31:0] ps1_out_b, ps2_out_b;
     logic [31:0] ps1_out_mem, ps2_out_mem;
 
     phys_reg_file u_phys_reg (
@@ -288,7 +288,7 @@ module ooo_top (
         .ps2_out_mem(ps2_out_mem)
     );
 
-    logic       dispatch_valid;
+    logic dispatch_valid;
     logic [4:0] dispatch_rob_tag;
     assign dispatch_valid   = lsq_alloc_valid_out;
     assign dispatch_rob_tag = lsq_dispatch_rob_tag;
@@ -334,7 +334,7 @@ module ooo_top (
         .store_lsq_done(store_lsq_done)
     );
 
-    // PC update (UPDATED: redirect priority, not gated by fetch_fire)
+    // PC update
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             pc_reg <= 32'h0000_0000;
